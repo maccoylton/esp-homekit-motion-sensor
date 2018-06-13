@@ -128,7 +128,8 @@ void create_accessory_name() {
 
 void gpio_init() {
 
-    gpio_set_pullup(MOTION_SENSOR_GPIO, true, true);
+    gpio_enable(MOTION_SENSOR_GPIO, GPIO_INPUT);
+    gpio_set_pullup(MOTION_SENSOR_GPIO, false, false);
     gpio_set_interrupt(MOTION_SENSOR_GPIO, GPIO_INTTYPE_EDGE_ANY, motion_sensor_callback);
 }
 
