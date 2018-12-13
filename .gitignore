@@ -1,0 +1,5 @@
+esp-homekit-motion-sensor.xcodeproj
+build/
+firmware/
+src/.DS_Store
+.DS_Store
