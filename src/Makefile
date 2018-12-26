@@ -6,7 +6,14 @@ EXTRA_COMPONENTS = \
 	extras/rboot-ota \
 	$(abspath ../components/esp-wolfssl) \
 	$(abspath ../components/esp-cjson) \
-	$(abspath ../components/esp-homekit)
+	$(abspath ../components/esp-homekit) \
+   	$(abspath ../libs/led_codes) \
+	$(abspath ../libs/check_wifi) \
+	$(abspath ../libs/ota)  \
+        $(abspath ../libs/http_post)
+
+
+
 
 FLASH_SIZE ?= 8
 HOMEKIT_SPI_FLASH_BASE_ADDR ?= 0x8c000

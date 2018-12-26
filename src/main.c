@@ -11,6 +11,7 @@
 #define DEVICE_SERIAL "12345678"
 #define FW_VERSION "1.0"
 #define MOTION_SENSOR_GPIO 12
+#define LED_GPIO 2
 
 
 #include <stdio.h>
@@ -25,14 +26,16 @@
 
 #include <homekit/homekit.h>
 #include <homekit/characteristics.h>
-
+#include <check_wifi.h>
+#include <led_codes.h>
+#include <http_post.h>
 
 // add this section to make your device OTA capable
 // create the extra characteristic &ota_trigger, at the end of the primary service (before the NULL)
 // it can be used in Eve, which will show it, where Home does not
 // and apply the four other parameters in the accessories_information section
 
-#include "ota-api.h"
+#include <ota-api.h>
 
 homekit_characteristic_t ota_trigger      = API_OTA_TRIGGER;
 homekit_characteristic_t name             = HOMEKIT_CHARACTERISTIC_(NAME, DEVICE_NAME);
@@ -42,14 +45,15 @@ homekit_characteristic_t model            = HOMEKIT_CHARACTERISTIC_(MODEL,      
 homekit_characteristic_t revision         = HOMEKIT_CHARACTERISTIC_(FIRMWARE_REVISION,  FW_VERSION);
 homekit_characteristic_t motion_detected  = HOMEKIT_CHARACTERISTIC_(MOTION_DETECTED, 0);
 
-
+TaskHandle_t http_post_tasks_handle;
 
 void identify_task(void *_args) {
     vTaskDelete(NULL);
 }
 
 void identify(homekit_value_t _value) {
-    printf("identify\n");
+    printf("identify\n\n");
+    led_code(LED_GPIO, IDENTIFY_ACCESSORY);
     xTaskCreate(identify_task, "identify", 128, NULL, 2, NULL);
 }
 
@@ -89,7 +93,15 @@ void motion_sensor_callback(uint8_t gpio) {
         new = gpio_read(MOTION_SENSOR_GPIO);
         motion_detected.value = HOMEKIT_BOOL(new);
         homekit_characteristic_notify(&motion_detected, HOMEKIT_BOOL(new));
-        printf("Motion Detected on %d", gpio);
+        if (new == 1) {
+		printf("Motion Detected on %d\n", gpio);
+		snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('Office Motion Sensor', 1)");
+		vTaskResume( http_post_tasks_handle );
+	} else {
+	        printf("Motion Stopped on %d\n", gpio);
+                snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('Office Motion Sensor', 0)");
+                vTaskResume( http_post_tasks_handle );
+	}
     }
     else {
         printf("Interrupt on %d", gpio);
@@ -147,4 +159,9 @@ void user_init(void) {
         config.accessories[0]->config_number=c_hash;
 
     homekit_server_init(&config);
+
+    xTaskCreate(checkWifiTask, "check_wifi_connection_task", 256, NULL, 2, NULL);
+    xTaskCreate(http_post_task, "http post task", 512, NULL, 2, &http_post_tasks_handle);
+
+
 }
