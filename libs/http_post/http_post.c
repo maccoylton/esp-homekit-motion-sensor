@@ -31,15 +31,14 @@ float moisture;
 void http_post_task(void * pvParameters)
 {
     int successes = 0, failures = 0;
-    printf("HTTP get task starting...\r\n");
+    printf("HTTP post task starting...\r\n");
 
     while(1) {
-//        sdk_wifi_set_sleep_type(WIFI_SLEEP_NONE);
 
-	printf ("Suspending http_post_task\n");
-	vTaskSuspend( NULL );
+        printf ("Suspending http_post_task\n");
+        vTaskSuspend( NULL );
 	
-	printf ("Resumed http_post_task\n");
+        printf ("Resumed http_post_task\n");
 
         const struct addrinfo hints = {
             .ai_family = AF_INET,
@@ -85,12 +84,10 @@ void http_post_task(void * pvParameters)
         printf("... connected\r\n");
         freeaddrinfo(res);
         request[0] = "\0";
-//        snprintf(details, 80, "{\"temp\": %.3f, \"hum\": %.3f, \"mois\": %.3f}\r\n", temperature, humidity, moisture);
 
-	snprintf(details, 150, post_string);
+        snprintf(details, 150, post_string);
         snprintf(request, 450, "POST %s  HTTP/1.0\r\n"
 			"Host: %s\r\n"
-//			"User-Agent: esp-open-rtos/0.1 esp8266\r\n"
 			"Content-type: application/x-www-form-urlencoded\r\n"
 			"Content-Length: %d\r\n\r\n"
 			"%s", WEB_URL, WEB_SERVER, strlen(details), details);
@@ -122,7 +119,6 @@ void http_post_task(void * pvParameters)
             successes++;
         lwip_close(s);
         printf("successes = %d failures = %d\r\n", successes, failures);
-//        sdk_wifi_set_sleep_type(WIFI_SLEEP_LIGHT);
         vTaskDelay(10000 / portTICK_PERIOD_MS);
         printf("\r\nStarting again!\r\n");
     }

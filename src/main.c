@@ -1,7 +1,7 @@
 /*
  * Example of using esp-homekit library to control
  * moition sensor using an Hs501 sensor
- * The use and OTA mechanis created by HomeACcessoryKid 
+ * This uses an OTA mechanism created by HomeACcessoryKid
  *
  */
 
@@ -12,6 +12,7 @@
 #define FW_VERSION "1.0"
 #define MOTION_SENSOR_GPIO 12
 #define LED_GPIO 2
+#define MAX_NAME_LENGTH 63
 
 
 #include <stdio.h>
@@ -23,6 +24,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include <queue.h>
+#include <string.h>
 
 #include <homekit/homekit.h>
 #include <homekit/characteristics.h>
@@ -36,6 +38,8 @@
 // and apply the four other parameters in the accessories_information section
 
 #include <ota-api.h>
+char accessory_name[MAX_NAME_LENGTH+1];
+
 
 homekit_characteristic_t ota_trigger      = API_OTA_TRIGGER;
 homekit_characteristic_t name             = HOMEKIT_CHARACTERISTIC_(NAME, DEVICE_NAME);
@@ -45,7 +49,8 @@ homekit_characteristic_t model            = HOMEKIT_CHARACTERISTIC_(MODEL,      
 homekit_characteristic_t revision         = HOMEKIT_CHARACTERISTIC_(FIRMWARE_REVISION,  FW_VERSION);
 homekit_characteristic_t motion_detected  = HOMEKIT_CHARACTERISTIC_(MOTION_DETECTED, 0);
 
-TaskHandle_t http_post_tasks_handle;
+TaskHandle_t http_post_task_handle;
+//TaskHandle_t https_post_wolfssl_task_handle;
 
 void identify_task(void *_args) {
     vTaskDelete(NULL);
@@ -95,12 +100,14 @@ void motion_sensor_callback(uint8_t gpio) {
         homekit_characteristic_notify(&motion_detected, HOMEKIT_BOOL(new));
         if (new == 1) {
 		printf("Motion Detected on %d\n", gpio);
-		snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('Office Motion Sensor', 1)");
-		vTaskResume( http_post_tasks_handle );
-	} else {
-	        printf("Motion Stopped on %d\n", gpio);
-                snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('Office Motion Sensor', 0)");
-                vTaskResume( http_post_tasks_handle );
+		snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('%s', 1)", accessory_name);
+		vTaskResume( http_post_task_handle );
+        } else {
+        printf("Motion Stopped on %d\n", gpio);
+        snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('%s', 0)", accessory_name);
+	vTaskResume( http_post_task_handle );
+
+//        vTaskResume( https_post_wolfssl_task_handle );
 	}
     }
     else {
@@ -124,8 +131,8 @@ void create_accessory_name() {
 				DEVICE_MODEL,
 				serialNumberValue);
 
-    if (name_len > 63) {
-        name_len = 63;
+    if (name_len > MAX_NAME_LENGTH) {
+        name_len = MAX_NAME_LENGTH;
     }
 
     char *name_value = malloc(name_len + 1);
@@ -133,10 +140,12 @@ void create_accessory_name() {
     snprintf(name_value, name_len + 1, "%s-%s-%s",
 		 DEVICE_NAME, DEVICE_MODEL, serialNumberValue);
 
-   
+    strcpy (accessory_name, name_value);   
+
     name.value = HOMEKIT_STRING(name_value);
     serial.value = name.value;
 }
+
 
 void gpio_init() {
 
@@ -144,6 +153,7 @@ void gpio_init() {
     gpio_set_pullup(MOTION_SENSOR_GPIO, false, false);
     gpio_set_interrupt(MOTION_SENSOR_GPIO, GPIO_INTTYPE_EDGE_ANY, motion_sensor_callback);
 }
+
 
 void user_init(void) {
     uart_set_baud(0, 115200);
@@ -161,7 +171,8 @@ void user_init(void) {
     homekit_server_init(&config);
 
     xTaskCreate(checkWifiTask, "check_wifi_connection_task", 256, NULL, 2, NULL);
-    xTaskCreate(http_post_task, "http post task", 512, NULL, 2, &http_post_tasks_handle);
+    xTaskCreate(http_post_task, "http post task", 512, NULL, 2, &http_post_task_handle);
+//    xTaskCreate(https_post_wolfssl_task, "https post wolfssl task", 2048, NULL, 2, &https_post_wolfssl_task_handle);
 
 
 }
