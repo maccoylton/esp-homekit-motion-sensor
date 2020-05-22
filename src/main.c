@@ -9,11 +9,8 @@
 #define DEVICE_NAME "Motion-Sensor"
 #define DEVICE_MODEL "Basic"
 #define DEVICE_SERIAL "12345678"
-#define FW_VERSION "1.0"
+#define FW_VERSION "2.0"
 #define MOTION_SENSOR_GPIO 12
-#define LED_GPIO 2
-#define MAX_NAME_LENGTH 63
-
 
 #include <stdio.h>
 #include <espressif/esp_wifi.h>
@@ -23,14 +20,17 @@
 #include <esp8266.h>
 #include <FreeRTOS.h>
 #include <task.h>
-#include <queue.h>
 #include <string.h>
 
 #include <homekit/homekit.h>
 #include <homekit/characteristics.h>
-#include <check_wifi.h>
+#include <wifi_config.h>
+
 #include <led_codes.h>
-#include <http_post.h>
+#include <udplogger.h>
+#include <custom_characteristics.h>
+#include <shared_functions.h>
+
 
 // add this section to make your device OTA capable
 // create the extra characteristic &ota_trigger, at the end of the primary service (before the NULL)
@@ -38,8 +38,14 @@
 // and apply the four other parameters in the accessories_information section
 
 #include <ota-api.h>
-char accessory_name[MAX_NAME_LENGTH+1];
 
+
+homekit_characteristic_t wifi_reset   = HOMEKIT_CHARACTERISTIC_(CUSTOM_WIFI_RESET, false, .setter=wifi_reset_set);
+homekit_characteristic_t wifi_check_interval   = HOMEKIT_CHARACTERISTIC_(CUSTOM_WIFI_CHECK_INTERVAL, 10, .setter=wifi_check_interval_set);
+/* checks the wifi is connected and flashes status led to indicated connected */
+homekit_characteristic_t task_stats   = HOMEKIT_CHARACTERISTIC_(CUSTOM_TASK_STATS, false , .setter=task_stats_set);
+homekit_characteristic_t ota_beta     = HOMEKIT_CHARACTERISTIC_(CUSTOM_OTA_BETA, false, .setter=ota_beta_set);
+homekit_characteristic_t lcm_beta    = HOMEKIT_CHARACTERISTIC_(CUSTOM_LCM_BETA, false, .setter=lcm_beta_set);
 
 homekit_characteristic_t ota_trigger      = API_OTA_TRIGGER;
 homekit_characteristic_t name             = HOMEKIT_CHARACTERISTIC_(NAME, DEVICE_NAME);
@@ -49,18 +55,9 @@ homekit_characteristic_t model            = HOMEKIT_CHARACTERISTIC_(MODEL,      
 homekit_characteristic_t revision         = HOMEKIT_CHARACTERISTIC_(FIRMWARE_REVISION,  FW_VERSION);
 homekit_characteristic_t motion_detected  = HOMEKIT_CHARACTERISTIC_(MOTION_DETECTED, 0);
 
-TaskHandle_t http_post_task_handle;
-//TaskHandle_t https_post_wolfssl_task_handle;
+int led_off_value=1; /* global varibale to support LEDs set to 0 where the LED is connected to GND, 1 where +3.3v */
 
-void identify_task(void *_args) {
-    vTaskDelete(NULL);
-}
-
-void identify(homekit_value_t _value) {
-    printf("identify\n\n");
-    led_code(LED_GPIO, IDENTIFY_ACCESSORY);
-    xTaskCreate(identify_task, "identify", 128, NULL, 2, NULL);
-}
+const int status_led_gpio = 2; /*set the gloabl variable for the led to be sued for showing status */
 
 
 homekit_accessory_t *accessories[] = {
@@ -77,7 +74,11 @@ homekit_accessory_t *accessories[] = {
         HOMEKIT_SERVICE(MOTION_SENSOR, .primary=true, .characteristics=(homekit_characteristic_t*[]){
             HOMEKIT_CHARACTERISTIC(NAME, "Motion Sensor"),
             &motion_detected,
-            &ota_trigger,
+            &wifi_reset,
+            &wifi_check_interval,
+            &task_stats,
+            &ota_beta,
+            &lcm_beta,
             NULL
         }),
         NULL
@@ -85,66 +86,25 @@ homekit_accessory_t *accessories[] = {
     NULL
 };
 
-homekit_server_config_t config = {
-    .accessories = accessories,
-    .password = "111-11-111"
-};
 
 void motion_sensor_callback(uint8_t gpio) {
-
-
+    
     if (gpio == MOTION_SENSOR_GPIO){
         int new = 0;
         new = gpio_read(MOTION_SENSOR_GPIO);
         motion_detected.value = HOMEKIT_BOOL(new);
         homekit_characteristic_notify(&motion_detected, HOMEKIT_BOOL(new));
         if (new == 1) {
-		printf("Motion Detected on %d\n", gpio);
-		snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('%s', 1)", accessory_name);
-		vTaskResume( http_post_task_handle );
+            printf("Motion Detected on %d\n", gpio);
         } else {
-        printf("Motion Stopped on %d\n", gpio);
-        snprintf (post_string, 150, "sql=insert into homekit.motionsensorlog (MotionSensorName, MotionDetectionState) values ('%s', 0)", accessory_name);
-	vTaskResume( http_post_task_handle );
-
-//        vTaskResume( https_post_wolfssl_task_handle );
-	}
+            printf("Motion Stopped on %d\n", gpio);
+        }
     }
     else {
         printf("Interrupt on %d", gpio);
     }
-
 }
 
-
-
-void create_accessory_name() {
-
-    int serialLength = snprintf(NULL, 0, "%d", sdk_system_get_chip_id());
-
-    char *serialNumberValue = malloc(serialLength + 1);
-
-    snprintf(serialNumberValue, serialLength + 1, "%d", sdk_system_get_chip_id());
-    
-    int name_len = snprintf(NULL, 0, "%s-%s-%s",
-				DEVICE_NAME,
-				DEVICE_MODEL,
-				serialNumberValue);
-
-    if (name_len > MAX_NAME_LENGTH) {
-        name_len = MAX_NAME_LENGTH;
-    }
-
-    char *name_value = malloc(name_len + 1);
-
-    snprintf(name_value, name_len + 1, "%s-%s-%s",
-		 DEVICE_NAME, DEVICE_MODEL, serialNumberValue);
-
-    strcpy (accessory_name, name_value);   
-
-    name.value = HOMEKIT_STRING(name_value);
-    serial.value = name.value;
-}
 
 
 void gpio_init() {
@@ -155,24 +115,42 @@ void gpio_init() {
 }
 
 
+void recover_from_reset (int reason) {
+    /* called if we restarted abnormally */
+    printf ("%s: reason %d\n", __func__, reason);
+}
+
+
+void save_characteristics (  ) {
+    /* called by a timer function to save charactersitics */
+}
+
+
+void accessory_init_not_paired (void) {
+    /* initalise anything you don't want started until wifi and homekit imitialisation is confirmed, but not paired */
+}
+
+
+void accessory_init (void ){
+    /* initalise anything you don't want started until wifi and pairing is confirmed */
+}
+
+
+
+homekit_server_config_t config = {
+    .accessories = accessories,
+    .password = "111-11-111",
+    .setupId = "1234",
+    .on_event = on_homekit_event
+};
+
+
 void user_init(void) {
-    uart_set_baud(0, 115200);
-
+    
+    standard_init (&name, &manufacturer, &model, &serial, &revision);
+    
     gpio_init();
-
-    create_accessory_name(); 
-
-
-    int c_hash=ota_read_sysparam(&manufacturer.value.string_value,&serial.value.string_value,
-                                      &model.value.string_value,&revision.value.string_value);
-    if (c_hash==0) c_hash=1;
-        config.accessories[0]->config_number=c_hash;
-
-    homekit_server_init(&config);
-
-    xTaskCreate(checkWifiTask, "check_wifi_connection_task", 256, NULL, 2, NULL);
-    xTaskCreate(http_post_task, "http post task", 512, NULL, 2, &http_post_task_handle);
-//    xTaskCreate(https_post_wolfssl_task, "https post wolfssl task", 2048, NULL, 2, &https_post_wolfssl_task_handle);
-
-
+    
+    wifi_config_init(DEVICE_NAME, NULL, on_wifi_ready);
+    
 }
