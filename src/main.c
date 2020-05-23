@@ -74,6 +74,7 @@ homekit_accessory_t *accessories[] = {
         HOMEKIT_SERVICE(MOTION_SENSOR, .primary=true, .characteristics=(homekit_characteristic_t*[]){
             HOMEKIT_CHARACTERISTIC(NAME, "Motion Sensor"),
             &motion_detected,
+            &ota_trigger,
             &wifi_reset,
             &wifi_check_interval,
             &task_stats,
